@@ -26,7 +26,7 @@ public class pdf2vector {
         // example commandline args:
         // pdf2vector -book.pdf
         
-        new pdf2vector(".//test//test_print.pdf");
+        new pdf2vector(".//test//sample-kitchen-sink.pdf");
     }       
         
 

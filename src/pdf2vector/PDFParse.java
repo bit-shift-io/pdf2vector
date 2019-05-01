@@ -1,19 +1,4 @@
-/*
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+
 
 package pdf2vector;
 
@@ -123,7 +108,6 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         int heightPx = (int)pageSize.getHeight();
 
         // svg
-        //graphics = new VectorGraphics2D();
         String svg_name = ".//test//" + String.format("%03d", page_number) + ".svg";
         graphics = new SVGGraphics2D(new File(svg_name), new Dimension(widthPx, heightPx));
         
@@ -155,14 +139,7 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         
         ((PSGraphics2D)graphics_eps).startExport();
         graphics_eps.setBackground(Color.WHITE);
-        graphics_eps.clearRect(0, 0, widthPx, heightPx);        
-        //graphics_eps = new EPSDocumentGraphics2D(false);
-        //eps_out = new java.io.FileOutputStream(".//test//" + eps_name);
-        //eps_out = new java.io.BufferedOutputStream(eps_out);
-        //graphics_eps = new EPSDocumentGraphics2D(false);
-        //graphics_eps.setGraphicContext(new GraphicContext());
-        //graphics_eps.setCustomTextHandler(new NativeTextHandler(graphics_eps, null)); // https://issues.apache.org/jira/browse/FOP-2032 // move this to the text function!
-        //graphics_eps.setupDocument(eps_out, widthPx, heightPx); // points
+        graphics_eps.clearRect(0, 0, widthPx, heightPx);
         
         graphics_eps.translate(0, pageSize.getHeight());
         graphics_eps.scale(1, -1);  
@@ -179,35 +156,8 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
     }
     
     public void write(){
-        
         ((SVGGraphics2D)graphics).endExport();
-        
-        
         ((PSGraphics2D)graphics_eps).endExport();
-        
-        /*
-        // http://trac.erichseifert.de/vectorgraphics2d/
-        PageSize current_page_size = new PageSize(pageSize.getWidth(), pageSize.getHeight());
-        int page_number = current_page +1;
-        
-        String svg_name = ".//test//" + String.format("%03d", page_number) + ".svg";
-        String eps_name = ".//test//" + String.format("%03d", page_number) + ".eps";
-        
-        Processor eps_proc = new EPSProcessor();
-        Processor svg_proc = new SVGProcessor();
-        CommandSequence commands = ((VectorGraphics2D) graphics).getCommands();
-        Document svg_doc = svg_proc.getDocument(commands, current_page_size);
-        Document eps_doc = eps_proc.getDocument(commands, current_page_size);
-        
-        // write
-        try {
-            //SVGUtils.writeToSVG(svg_file, graphics.getSVGElement());
-            svg_doc.writeTo(new FileOutputStream(svg_name));
-            eps_doc.writeTo(new FileOutputStream(eps_name));
-            //graphics_eps.finish();
-        } catch (IOException ex) {
-        }      
-        */
     }
 
     /**
@@ -314,12 +264,9 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         }
         
         Paint paint = shading.toPaint(ctm);
-        if (!(paint instanceof Color || paint instanceof GradientPaint))
-            Util.log("painting as image");
-        
 
         // Type 2 - axial
-        // conver to a gradient paint!
+        // convert to a gradient paint!
         if (shading instanceof PDShadingType2){
             PDShadingType2 type = (PDShadingType2)shading;
             float[] coords = type.getCoords().toFloatArray();
@@ -344,6 +291,9 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
 
             paint = new GradientPaint(p1x, p1y, c1, p2x, p2y, c2);
         }
+        
+        if (!(paint instanceof Color || paint instanceof GradientPaint))
+            Util.log("painting as image");        
         
         graphics.setComposite(getGraphicsState().getNonStrokingJavaComposite());
         graphics.setPaint(paint);
@@ -495,7 +445,6 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         graphics_eps.setTransform(xform);
 
         // collect info from showGlyph();
-        //current_text_item = new TextItem();
         super.showText(string);
         
         // restore page graphics
