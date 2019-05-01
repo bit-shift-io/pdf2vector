@@ -24,9 +24,9 @@ public class pdf2vector {
         System.setProperty("org.apache.commons.logging.Log", "org.apache.commons.logging.impl.NoOpLog");
         
         // example commandline args:
-        // pdf2svg -book.pdf
+        // pdf2vector -book.pdf
         
-        new pdf2vector("test.pdf");
+        new pdf2vector(".//test//test_print.pdf");
     }       
         
 
@@ -36,11 +36,12 @@ public class pdf2vector {
      * @throws IOException 
      */
     public void parse(String filename) throws IOException{
-        File file = new File(".//test//test_print.pdf");
-        //file = new File(".//test//sample-kitchen-sink.pdf");
-        
+        File file = new File(filename);
         if (!file.exists())
+        {
+            Util.log(filename + " not found!");
             return;
+        }
         
         PDDocument document = PDDocument.load(file);
         int start = 1;
