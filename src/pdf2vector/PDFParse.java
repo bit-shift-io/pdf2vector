@@ -1,5 +1,3 @@
-
-
 package pdf2vector;
 
 import java.awt.BasicStroke;
@@ -7,6 +5,7 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.GradientPaint;
+import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Paint;
 import java.awt.Shape;
@@ -19,13 +18,30 @@ import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.stream.Stream;
+import org.apache.pdfbox.contentstream.PDContentStream;
 import org.apache.pdfbox.contentstream.PDFGraphicsStreamEngine;
+import org.apache.pdfbox.contentstream.operator.Operator;
+import org.apache.pdfbox.contentstream.operator.OperatorProcessor;
 import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSBase;
+import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.cos.COSObject;
+import org.apache.pdfbox.cos.COSStream;
+import org.apache.pdfbox.pdfparser.PDFStreamParser;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.pdmodel.font.PDFont;
 import org.apache.pdfbox.pdmodel.font.PDFontDescriptor;
@@ -39,13 +55,23 @@ import org.apache.pdfbox.util.Vector;
 
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDResources;
+import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.pdmodel.common.function.PDFunction;
+import org.apache.pdfbox.pdmodel.graphics.PDXObject;
+import org.apache.pdfbox.pdmodel.graphics.blend.BlendMode;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColorSpace;
+import org.apache.pdfbox.pdmodel.graphics.color.PDPattern;
+import org.apache.pdfbox.pdmodel.graphics.form.PDFormXObject;
+import org.apache.pdfbox.pdmodel.graphics.form.PDTransparencyGroup;
+import org.apache.pdfbox.pdmodel.graphics.form.PDTransparencyGroupAttributes;
 import org.apache.pdfbox.pdmodel.graphics.pattern.PDAbstractPattern;
 import org.apache.pdfbox.pdmodel.graphics.pattern.PDShadingPattern;
 import org.apache.pdfbox.pdmodel.graphics.pattern.PDTilingPattern;
 import org.apache.pdfbox.pdmodel.graphics.shading.PDShadingType2;
+import org.apache.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState;
+import org.apache.pdfbox.pdmodel.graphics.state.PDSoftMask;
 import org.apache.pdfbox.pdmodel.graphics.state.RenderingMode;
 import org.apache.xmlgraphics.java2d.CMYKColorSpace;
 import org.freehep.graphicsbase.util.UserProperties;
@@ -67,7 +93,6 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
     // from PageDrawer
     private Graphics2D graphics;
     private Graphics2D graphics_eps;
-    private OutputStream eps_out;
 
     private GeneralPath linePath = new GeneralPath();
     private int clipWindingRule = -1;
@@ -77,7 +102,11 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
     
     private AffineTransform xform; // graphic transform before transformed to fit page
     private AffineTransform xform_flip;
-    private AffineTransform xform_page;
+    
+    // what we export
+    public boolean enable_text = false;
+    public boolean enable_vector = true;
+    public boolean enable_image = true;
     
 
     /**
@@ -184,6 +213,9 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
     @Override
     public void drawImage(PDImage pdImage) throws IOException
     {
+        if (!enable_image)
+            return;
+        
         BufferedImage image = pdImage.getImage();
         Matrix ctmNew = getGraphicsState().getCurrentTransformationMatrix();
         AffineTransform imageTransform = ctmNew.createAffineTransform();
@@ -201,6 +233,8 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
      */
     @Override
     public void fillAndStrokePath(int winding_rule) throws IOException {
+        if (!enable_vector)
+            return;
         // TODO can we avoid cloning the path?
         GeneralPath path = (GeneralPath)linePath.clone();
         fillPath(winding_rule);
@@ -248,6 +282,7 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
             // reset
             linePath.reset(); 
             
+            Util.log("pattern");
             return;
         }
         
@@ -258,12 +293,21 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
             shading = shadingPattern.getShading();
             
             if (shading == null){
+                Util.log("TODO: fill transparent here?");
                 linePath.reset();
                 return;
-            }            
+            } 
+            
+            Util.log("TODO:  shading paint matrix!");
+            /*
+            Matrix init_matrix = getInitialMatrix();
+            Matrix shading_matrix = shadingPattern.getMatrix();
+            paint = shading.toPaint(Matrix.concatenate(init_matrix, shading_matrix));    
+            */
         }
         
         Paint paint = shading.toPaint(ctm);
+
 
         // Type 2 - axial
         // convert to a gradient paint!
@@ -291,6 +335,7 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
 
             paint = new GradientPaint(p1x, p1y, c1, p2x, p2y, c2);
         }
+
         
         if (!(paint instanceof Color || paint instanceof GradientPaint))
             Util.log("painting as image");        
@@ -305,9 +350,9 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         graphics_eps.fill(shape);
         
         // clean
-        graphics.setClip(null); 
-        graphics_eps.setClip(null); 
-        lastClip = null;    
+        //graphics.setClip(null); 
+        //graphics_eps.setClip(null); 
+        //lastClip = null;    
         
         // reset color as there looks like a bug there last color is applied!
         state.setNonStrokingColor(nonStrokingColor);
@@ -316,7 +361,8 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         // reset
         linePath.reset(); 
     } 
-
+    
+    
     /**
      * Shape flat fill is processed here
      * @param windingRule
@@ -324,6 +370,9 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
      */
     @Override
     public void fillPath(int windingRule) throws IOException {
+        if (!enable_vector)
+            return;
+                    
         // this has properties such as line width, etc...
         PDGraphicsState state = getGraphicsState();
         String fill_type = state.getNonStrokingColor().getColorSpace().getName();
@@ -335,18 +384,81 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
             return;
         }
         
-        GeneralPath path = (GeneralPath)getLinePath().clone();
+        // check for soft mask
+        PDSoftMask soft_mask = getGraphicsState().getSoftMask();
+        if (soft_mask != null){
+            PDColor backdrop_color = null;
+            COSName type = soft_mask.getSubType();
+            
+            if (COSName.LUMINOSITY.equals(type))
+            {
+                COSArray backdrop_color_array = soft_mask.getBackdropColor();
+                PDTransparencyGroup transparency_group = soft_mask.getGroup();
+                PDColorSpace color_space = transparency_group.getGroup().getColorSpace();
+                if (color_space != null && backdrop_color_array != null)
+                    backdrop_color = new PDColor(backdrop_color_array, color_space);
+                // TODO: do we go transparent if no backdrop color? 
+            }
+            
+            PDFunction function = soft_mask.getTransferFunction();
+            PDTransparencyGroup transparency_group = soft_mask.getGroup(); // this is also called the form
+            
+            PDTransparencyGroupAttributes attributes = transparency_group.getGroup();
+            boolean is_isolated = attributes.isIsolated();
+            boolean has_blend_mode = hasBlendMode(transparency_group, new HashSet<COSBase>());
+            boolean needs_backdrop = is_isolated && has_blend_mode;
+            boolean is_kockout = attributes.isKnockout();
+            
+            // get transform
+            Matrix initial_matrix = soft_mask.getInitialTransformationMatrix();
+            Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
+            Matrix transform = Matrix.concatenate(ctm, initial_matrix);
+            
+            // transform the bbox
+            GeneralPath transformedBox = transparency_group.getBBox().transform(transform);
+
+            // TODO: might need to make this a recursive loop!
+            // the loop should return a list of PDXObjects?
+            
+            // get resources
+            PDResources resources = transparency_group.getResources();
+            Iterable<COSName> xobjs = resources.getXObjectNames();
+            for (COSName xobj : xobjs){
+                Util.log(xobj.getName());
+                PDXObject pdxObject = resources.getXObject(xobj);
+
+                if (pdxObject instanceof PDFormXObject) {
+                    PDResources new_res = ((PDFormXObject)pdxObject).getResources();
+                    Iterable<COSName> new_xobjs = new_res.getXObjectNames();
+                    
+                    for (COSName new_xobj : new_xobjs){
+                        Util.log(new_xobj.getName());
+                        PDXObject new_pdxObject = new_res.getXObject(new_xobj);
+                        PDResources new_res2 = ((PDFormXObject)new_pdxObject).getResources();
+                        int i = 0;
+                    }
+                }
+                
+                if (pdxObject.getCOSObject() instanceof COSDictionary) {
+                    Util.log("cos dictionary");
+                }
+                
+            }
+
+
+            
+            Util.log("TODO: soft mask " + type);
+        }
         
+        GeneralPath path = (GeneralPath)getLinePath().clone();
         Shape shape = path.createTransformedShape(xform);
-
-
         Color fill_color = new Color(state.getNonStrokingColor().toRGB());
         
         // svg rgb
         graphics.setPaint(fill_color);
-        graphics.draw(shape);
+        graphics.fill(shape);
         
-        setClip();
+        //setClip();
         linePath.setWindingRule(windingRule);
         
         if (fill_type.contains("CMYK")){
@@ -367,10 +479,13 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
      */
     @Override
     public void strokePath() throws IOException {
+        if (!enable_vector)
+            return;
+                    
         // this has properties such as line width, etc...
         PDGraphicsState state = getGraphicsState();
         String stroke_type = state.getStrokingColor().getColorSpace().getName();
-        if (stroke_type.contains("Separation")){
+        if (stroke_type.contains("Separation") || state.getStrokingColor().isPattern()){
             linePath.reset();   
             return;
         }
@@ -390,7 +505,7 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         // svg rgb
         graphics.setStroke(stroke);
         graphics.setPaint(stroke_color);
-        setClip();
+        //setClip();
         graphics.draw(shape);
         
         if (stroke_type.contains("CMYK")){
@@ -428,6 +543,8 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
     @Override
     public void showTextStrings(COSArray array) throws IOException
     {
+        if (!enable_text)
+            return;
         super.showTextStrings(array);
     }
     
@@ -722,6 +839,45 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
     @Override
     public void run() {
         throw new UnsupportedOperationException("Not supported yet."); //To change body of generated methods, choose Tools | Templates.
-    }  
+    }
     
+    private boolean hasBlendMode(PDTransparencyGroup group, Set<COSBase> groupsDone){
+        if (groupsDone.contains(group.getCOSObject())){
+            // The group was already processed. Avoid endless recursion.
+            return false;
+        }
+        groupsDone.add(group.getCOSObject());
+
+        PDResources resources = group.getResources();
+        if (resources == null){
+            return false;
+        }
+        for (COSName name : resources.getExtGStateNames()){
+            PDExtendedGraphicsState extGState = resources.getExtGState(name);
+            if (extGState == null){
+                continue;
+            }
+            BlendMode blendMode = extGState.getBlendMode();
+            if (blendMode != BlendMode.NORMAL){
+                return true;
+            }
+        }
+
+        // Recursively process nested transparency groups
+        for (COSName name : resources.getXObjectNames())
+        {
+            PDXObject xObject;
+            try{
+                xObject = resources.getXObject(name);
+            }
+            catch (IOException ex){
+                continue;
+            }
+            if (xObject instanceof PDTransparencyGroup &&
+                hasBlendMode((PDTransparencyGroup)xObject, groupsDone)){
+                return true;
+            }
+        }
+        return false;
+    }    
 }
