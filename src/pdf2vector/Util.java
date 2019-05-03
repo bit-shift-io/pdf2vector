@@ -76,7 +76,7 @@ public class Util {
         // from Ngoc's test pdf
         put("geometric231bt-heavyc", "Geometr231 Hv BT");
         put("geometric415bt-blacka", "geometr415blk");
-        put("timesnewromanps-boldmt", "Times New Roman MT Extra Bold");
+        put("timesnewromanps-boldmt", "Times New Roman");
         
         // lm fonts
         put("lmmathsymbols10-regular", "L M Math Symbols10");

@@ -9,11 +9,6 @@ import org.apache.pdfbox.pdmodel.PDDocument;
  * @author Bronson
  */
 public class pdf2vector {
-
-    pdf2vector(String filename) throws IOException{
-        parse(filename);
-    }
-        
     /**
      * @param args the command line arguments
      * @throws java.io.IOException
@@ -25,32 +20,18 @@ public class pdf2vector {
         
         // example commandline args:
         // pdf2vector -book.pdf
+        String filename = ".//test//sample-kitchen-sink.pdf";
         
-        new pdf2vector(".//test//sample-kitchen-sink.pdf");
-    }       
-        
-
-    /**
-     * Parse the pdf and store the data
-     * @param filename
-     * @throws IOException 
-     */
-    public void parse(String filename) throws IOException{
         File file = new File(filename);
-        if (!file.exists())
-        {
+        if (!file.exists()){
             Util.log(filename + " not found!");
             return;
         }
         
+        long start_ms = System.currentTimeMillis();
         PDDocument document = PDDocument.load(file);
         int start = 1;
         int end = document.getNumberOfPages();
-        
-        long start_ms = System.currentTimeMillis();
-
-        // this method uses a custom graphics stream
-        // this works great, but the fill/pattern/gradients need fixing?
         PDFParse pdf = new PDFParse(document, start, end);
         
         // process each page
@@ -58,11 +39,8 @@ public class pdf2vector {
             pdf.current_page = p;
             pdf.processPage(document.getPage(p));
         }
+        
         pdf.close();
-
-
-
-        Util.log("pdf parse: " + ((System.currentTimeMillis() - start_ms)/1000f) + "s");
-    }    
-    
+        Util.log("completed in " + ((System.currentTimeMillis() - start_ms)/1000f) + "s");        
+    }       
 }
