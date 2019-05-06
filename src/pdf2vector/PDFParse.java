@@ -1,7 +1,9 @@
 package pdf2vector;
 
+import com.sun.org.apache.xpath.internal.objects.XObject;
 import java.awt.BasicStroke;
 import java.awt.Color;
+import java.awt.Composite;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.GradientPaint;
@@ -103,8 +105,10 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
     private AffineTransform xform; // graphic transform before transformed to fit page
     private AffineTransform xform_flip;
     
+    public PDResources resources;
+    
     // what we export
-    public boolean enable_text = false;
+    public boolean enable_text = true;
     public boolean enable_vector = true;
     public boolean enable_image = true;
     
@@ -241,6 +245,7 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         linePath = path;
         strokePath();
     }
+
     
     /**
      * Shape shading fill is processed here
@@ -259,8 +264,16 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         
         GeneralPath path = (GeneralPath)linePath.clone();
         Shape shape = path.createTransformedShape(xform);
+        Rectangle2D bounds = shape.getBounds2D();
         
+        // no shape
+        if (bounds.getWidth() == 0 || bounds.getHeight() == 0){
+            shape = getGraphicsState().getCurrentClippingPath();
+            bounds = shape.getBounds2D();
+        }
+
         Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
+        Paint paint = null;
         
         // pattern
         if (pattern != null && pattern instanceof PDTilingPattern){
@@ -285,7 +298,7 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
             Util.log("pattern");
             return;
         }
-        
+
         // shading
         if (shading == null){
             // found shading!
@@ -296,18 +309,8 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
                 Util.log("TODO: fill transparent here?");
                 linePath.reset();
                 return;
-            } 
-            
-            Util.log("TODO:  shading paint matrix!");
-            /*
-            Matrix init_matrix = getInitialMatrix();
-            Matrix shading_matrix = shadingPattern.getMatrix();
-            paint = shading.toPaint(Matrix.concatenate(init_matrix, shading_matrix));    
-            */
+            }    
         }
-        
-        Paint paint = shading.toPaint(ctm);
-
 
         // Type 2 - axial
         // convert to a gradient paint!
@@ -326,43 +329,196 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
             Color c1 = Util.to_color(evalFunction1);
             Color c2 = Util.to_color(evalFunction2);
             
-            // calculate points
-            Rectangle2D bounds = shape.getBounds2D();
-            float p1x = (float)(coords[0] + bounds.getMinX());
-            float p1y = (float)(coords[1] + bounds.getMaxY());
-            float p2x = (float)(coords[2] + p1x);
-            float p2y = (float)(coords[3] + p1y);
-
-            paint = new GradientPaint(p1x, p1y, c1, p2x, p2y, c2);
+            Point2D.Float p1 = ctm.transformPoint(coords[0], coords[1]);
+            Point2D.Float p2 = ctm.transformPoint(coords[2], coords[3]);
+            
+            paint = new GradientPaint(p1.x, p1.y, c1, p2.x, p2.y, c2);
         }
-
-        
+ 
         if (!(paint instanceof Color || paint instanceof GradientPaint))
             Util.log("painting as image");        
-        
-        graphics.setComposite(getGraphicsState().getNonStrokingJavaComposite());
+                
+        //graphics.setComposite(getGraphicsState().getNonStrokingJavaComposite());
         graphics.setPaint(paint);
         graphics.fill(shape);
 
         // eps
-        graphics_eps.setComposite(getGraphicsState().getNonStrokingJavaComposite());
+        //graphics_eps.setComposite(getGraphicsState().getNonStrokingJavaComposite());
         graphics_eps.setPaint(paint);
         graphics_eps.fill(shape);
-        
-        // clean
-        //graphics.setClip(null); 
-        //graphics_eps.setClip(null); 
-        //lastClip = null;    
-        
-        // reset color as there looks like a bug there last color is applied!
-        state.setNonStrokingColor(nonStrokingColor);
-        state.setStrokingColor(strokingColor);
-        
+ 
         // reset
-        linePath.reset(); 
+        linePath.reset();   
     } 
     
     
+    /**
+     * Form XObjects is a way of describing objects (text, images, vector elements,…) within a PDF file.
+     * @param resources
+     * @return 
+     * @throws java.io.IOException 
+    */
+    public List<PDFormXObject> find_form_objects(PDFormXObject xobject) throws IOException{
+        List<PDFormXObject> result = new ArrayList();
+        
+        PDResources res = xobject.getResources();
+        Iterable<COSName> xobjs = res.getXObjectNames();
+        
+        for (COSName xobj : xobjs){
+            Util.log(xobj.getName());
+            PDXObject pdxObject = res.getXObject(xobj);
+
+            if (pdxObject instanceof PDFormXObject) {
+                PDFormXObject form = (PDFormXObject)pdxObject;
+                result.add(form);
+                List<PDFormXObject> form_children = find_form_objects(form);
+                result.addAll(form_children);
+            }
+        }           
+        
+        return result;
+    }
+    
+    /**
+     * Soft mask fills
+     */
+    public void soft_mask_fill() throws IOException{
+        // this has properties such as line width, etc...
+        PDGraphicsState state = getGraphicsState();
+        String fill_type = state.getNonStrokingColor().getColorSpace().getName();
+        PDSoftMask soft_mask = getGraphicsState().getSoftMask();
+        
+        GeneralPath path = (GeneralPath)getLinePath().clone();
+        Shape shape = path.createTransformedShape(xform);       
+        
+        PDColor backdrop_color = null;
+        COSName soft_mask_type = soft_mask.getSubType();
+        Color fill_color = new Color(state.getNonStrokingColor().toRGB());
+
+        if (COSName.LUMINOSITY.equals(soft_mask_type))
+        {
+            COSArray backdrop_color_array = soft_mask.getBackdropColor();
+            PDTransparencyGroup transparency_group = soft_mask.getGroup();
+            PDColorSpace color_space = transparency_group.getGroup().getColorSpace();
+            if (color_space != null && backdrop_color_array != null)
+                backdrop_color = new PDColor(backdrop_color_array, color_space);
+            // TODO: do we go transparent if no backdrop color? 
+        }
+
+        PDFunction soft_mask_function = soft_mask.getTransferFunction();
+        PDTransparencyGroup transparency_group = soft_mask.getGroup(); // this is also called the form
+
+        PDTransparencyGroupAttributes attributes = transparency_group.getGroup();
+        boolean is_isolated = attributes.isIsolated();
+        boolean has_blend_mode = hasBlendMode(transparency_group, new HashSet<COSBase>());
+        boolean needs_backdrop = is_isolated && has_blend_mode;
+        boolean is_kockout = attributes.isKnockout();
+
+        // get transform
+        Matrix initial_matrix = soft_mask.getInitialTransformationMatrix();
+        Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
+        Matrix transform = Matrix.concatenate(ctm, initial_matrix);
+
+        // transform the bbox
+        GeneralPath transformedBox = transparency_group.getBBox().transform(transform);
+        //PDResources resources = transparency_group.getResources();
+
+        // get list of form xobjects
+        // this is recursive to include children
+        List<PDFormXObject> form_list = find_form_objects(transparency_group);
+        List<Object> pattern_and_shading = new ArrayList();
+        for (PDFormXObject form : form_list){
+            PDResources res = form.getResources();
+            Iterable<COSName> pattern_names = res.getPatternNames();
+            Iterable<COSName> shading_names = res.getShadingNames();
+            Iterable<COSName> color_space_names = res.getColorSpaceNames();
+            Iterable<COSName> ext_gstate_names = res.getExtGStateNames();
+            
+            for (COSName ext_gstate_name : ext_gstate_names){
+                PDExtendedGraphicsState gs = res.getExtGState(ext_gstate_name);
+                int i = 0;
+            }
+
+            for (COSName color_space_name : color_space_names){
+                PDColorSpace color_space = res.getColorSpace(color_space_name);
+                String color_space_type = color_space.getName();
+                float[] col = color_space.getInitialColor().getComponents();
+                int i = 0;
+            }
+            // any patterns here
+            for (COSName pattern_name : pattern_names){
+                PDAbstractPattern pattern = res.getPattern(pattern_name);
+                //pattern_and_shading.add(pattern);
+            }
+
+            // any shadings here
+            for (COSName shading_name : shading_names){
+                this.saveGraphicsState();
+                PDShading shading = res.getShading(shading_name);
+                Paint paint = shading.toPaint(ctm);
+                //pattern_and_shading.add(shading);
+                
+                Composite alpha_composite = getGraphicsState().getNonStrokingJavaComposite();
+                
+                
+                // TODO: get shading as function!
+                // Type 2 - axial
+                // convert to a gradient paint!
+                if (shading instanceof PDShadingType2){
+                    PDShadingType2 type = (PDShadingType2)shading;
+                    float[] coords = type.getCoords().toFloatArray();
+                    COSArray domain = type.getDomain();
+                    COSArray extend = type.getExtend();
+                    PDColorSpace color_space = type.getColorSpace();
+                    COSArray bg = type.getBackground();
+                    //shading.getColorSpace()
+                    
+                    PDFunction function = shading.getFunction();
+                    int inputs = function.getNumberOfInputParameters();
+                    // Function has a range? should we be using the range?
+                    float[] evalFunction1 = shading.evalFunction(0);
+                    float[] evalFunction2 = shading.evalFunction(1);
+
+                    Color c1 = Util.to_color(evalFunction1);
+                    Color c2 = Util.to_color(evalFunction2);
+
+                    // calculate points
+                    Rectangle2D bounds = shape.getBounds2D();
+                    float p1x = (float)(coords[0] + bounds.getMinX());
+                    float p1y = (float)(coords[1] + bounds.getMaxY());
+                    float p2x = (float)(coords[2] + p1x);
+                    float p2y = (float)(coords[3] + p1y);
+
+                    paint = new GradientPaint(p1x, p1y, c1, p2x, p2y, c2);
+                }                   
+
+                if (!(paint instanceof Color || paint instanceof GradientPaint))
+                    Util.log("painting as image");        
+
+                // TODO: this fill block as function!
+                //graphics.setComposite(getGraphicsState().getNonStrokingJavaComposite());
+                graphics.setPaint(paint);
+                graphics.fill(shape);
+
+                // eps
+                //graphics_eps.setComposite(getGraphicsState().getNonStrokingJavaComposite());
+                graphics_eps.setPaint(paint);
+                graphics_eps.fill(shape);
+
+                // clean
+                //graphics.setClip(null); 
+                //graphics_eps.setClip(null); 
+                //lastClip = null;    
+
+                // reset color as there looks like a bug there last color is applied!
+                this.restoreGraphicsState();
+
+            }
+        }
+
+        // from PageDrawer
+        linePath.reset();
+    }
     /**
      * Shape flat fill is processed here
      * @param windingRule
@@ -387,79 +543,24 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         // check for soft mask
         PDSoftMask soft_mask = getGraphicsState().getSoftMask();
         if (soft_mask != null){
-            PDColor backdrop_color = null;
-            COSName type = soft_mask.getSubType();
-            
-            if (COSName.LUMINOSITY.equals(type))
-            {
-                COSArray backdrop_color_array = soft_mask.getBackdropColor();
-                PDTransparencyGroup transparency_group = soft_mask.getGroup();
-                PDColorSpace color_space = transparency_group.getGroup().getColorSpace();
-                if (color_space != null && backdrop_color_array != null)
-                    backdrop_color = new PDColor(backdrop_color_array, color_space);
-                // TODO: do we go transparent if no backdrop color? 
-            }
-            
-            PDFunction function = soft_mask.getTransferFunction();
-            PDTransparencyGroup transparency_group = soft_mask.getGroup(); // this is also called the form
-            
-            PDTransparencyGroupAttributes attributes = transparency_group.getGroup();
-            boolean is_isolated = attributes.isIsolated();
-            boolean has_blend_mode = hasBlendMode(transparency_group, new HashSet<COSBase>());
-            boolean needs_backdrop = is_isolated && has_blend_mode;
-            boolean is_kockout = attributes.isKnockout();
-            
-            // get transform
-            Matrix initial_matrix = soft_mask.getInitialTransformationMatrix();
-            Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
-            Matrix transform = Matrix.concatenate(ctm, initial_matrix);
-            
-            // transform the bbox
-            GeneralPath transformedBox = transparency_group.getBBox().transform(transform);
-
-            // TODO: might need to make this a recursive loop!
-            // the loop should return a list of PDXObjects?
-            
-            // get resources
-            PDResources resources = transparency_group.getResources();
-            Iterable<COSName> xobjs = resources.getXObjectNames();
-            for (COSName xobj : xobjs){
-                Util.log(xobj.getName());
-                PDXObject pdxObject = resources.getXObject(xobj);
-
-                if (pdxObject instanceof PDFormXObject) {
-                    PDResources new_res = ((PDFormXObject)pdxObject).getResources();
-                    Iterable<COSName> new_xobjs = new_res.getXObjectNames();
-                    
-                    for (COSName new_xobj : new_xobjs){
-                        Util.log(new_xobj.getName());
-                        PDXObject new_pdxObject = new_res.getXObject(new_xobj);
-                        PDResources new_res2 = ((PDFormXObject)new_pdxObject).getResources();
-                        int i = 0;
-                    }
-                }
-                
-                if (pdxObject.getCOSObject() instanceof COSDictionary) {
-                    Util.log("cos dictionary");
-                }
-                
-            }
-
-
-            
-            Util.log("TODO: soft mask " + type);
+            Util.log("soft mask found");
+            //soft_mask_fill();
+            //return;
         }
         
         GeneralPath path = (GeneralPath)getLinePath().clone();
         Shape shape = path.createTransformedShape(xform);
         Color fill_color = new Color(state.getNonStrokingColor().toRGB());
         
+        //graphics.setComposite(getGraphicsState().getStrokingJavaComposite());
+        //graphics_eps.setComposite(getGraphicsState().getStrokingJavaComposite());
+        
         // svg rgb
         graphics.setPaint(fill_color);
         graphics.fill(shape);
         
         //setClip();
-        linePath.setWindingRule(windingRule);
+        linePath.setWindingRule(windingRule); // TODO: Is this needed?
         
         if (fill_type.contains("CMYK")){
             fill_color = new Color(CMYKColorSpace.getInstance(), state.getNonStrokingColor().getComponents(), 1f);
@@ -499,8 +600,8 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         
         Color stroke_color = new Color(state.getStrokingColor().toRGB());
 
-        graphics.setComposite(getGraphicsState().getStrokingJavaComposite());
-        graphics_eps.setComposite(getGraphicsState().getStrokingJavaComposite());
+        //graphics.setComposite(getGraphicsState().getStrokingJavaComposite());
+        //graphics_eps.setComposite(getGraphicsState().getStrokingJavaComposite());
         
         // svg rgb
         graphics.setStroke(stroke);
@@ -543,8 +644,6 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
     @Override
     public void showTextStrings(COSArray array) throws IOException
     {
-        if (!enable_text)
-            return;
         super.showTextStrings(array);
     }
     
@@ -556,6 +655,8 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
      */
     @Override
     protected void showText(byte[] string) throws IOException {
+        if (!enable_text)
+            return;        
         
         // flip the page graphics
         graphics.setTransform(xform);
