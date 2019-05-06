@@ -598,8 +598,9 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
             return;
         }
         
-        Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
-        BasicStroke stroke = new BasicStroke(state.getLineWidth(), state.getLineCap(), state.getLineJoin(), state.getMiterLimit());
+        // transform width by ctm
+        float line_width = transformWidth(state.getLineWidth());
+        BasicStroke stroke = new BasicStroke(line_width, state.getLineCap(), state.getLineJoin(), state.getMiterLimit());
 
         GeneralPath path = (GeneralPath)getLinePath().clone();
         Shape shape = xform.createTransformedShape(path);
@@ -625,8 +626,7 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         // reset path
         linePath.reset();        
     }           
-
-
+    
     /**
      * Called when a string of text is to be shown.
      *
