@@ -48,16 +48,21 @@ public class Util {
         put("timesnewromanpsmt-normalitalic", "Times New Roman");
         put("timesnewroman", "Times New Roman");
         put("couriernewpsmt", "Courier New");
+        put("couriernewpsmt-bold", "Courier New");
+        put("courier", "Courier New");
         put("georgia-bolditalic", "Georgia");
         put("georgia", "Georgia");
         put("frutiger-ultrablack", "Frutiger 95");
         put("geometr415blk", "Geometr415 Blk BT");
-        put("geometric415bt-blacka-normalitalic","Geometr415 Blk BT");
+        put("geometric415bt-blacka-normalitalic", "Geometr415 Blk BT");
+        put("geometric212bt-book-bold", "Geometr212 Bk BT");
+        put("geometric212bt-heavy", "Geometr212 Bk BT");
         put("arialnarrow-bold", "Arial Narrow");
         put("arialnarrow-normalitalic", "Arial Narrow");
         put("arialnarrow", "Arial Narrow");
         put("arialmt", "Arial");
         put("arialmt-bold", "Arial");
+        
         
         // unchanged
         put("swfrankgh","swfrankgh");

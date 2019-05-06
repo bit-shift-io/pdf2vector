@@ -20,7 +20,7 @@ public class pdf2vector {
         
         // example commandline args:
         // pdf2vector -book.pdf
-        String filename = ".//test//sample-kitchen-sink.pdf";
+        String filename = ".//test//test3.pdf";
         
         File file = new File(filename);
         if (!file.exists()){
@@ -32,7 +32,8 @@ public class pdf2vector {
         PDDocument document = PDDocument.load(file);
         int start = 1;
         int end = document.getNumberOfPages();
-        PDFParse pdf = new PDFParse(document, start, end);
+        end = 1; 
+        PDFParse pdf = new PDFParse(document, file, start, end);
         
         // process each page
         for (int p = start-1; p <= end-1; p++){

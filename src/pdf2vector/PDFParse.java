@@ -107,6 +107,8 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
     
     public PDResources resources;
     
+    public File file = null;
+    
     // what we export
     public boolean enable_text = true;
     public boolean enable_vector = true;
@@ -120,12 +122,13 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
      * @param p_start_page
      * @param p_end_page
      */
-    public PDFParse(PDDocument document, int p_start_page, int p_end_page)
+    public PDFParse(PDDocument p_document, File p_file, int p_start_page, int p_end_page)
     {
-        super(document.getPage(0));
-        this.document = document;
+        super(p_document.getPage(0));
+        this.document = p_document;
         this.start_page = p_start_page;
         this.end_page = p_end_page; 
+        this.file = p_file;
     }
     
     /**
@@ -139,9 +142,11 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         pageSize = page.getCropBox();
         int widthPx = (int)pageSize.getWidth();
         int heightPx = (int)pageSize.getHeight();
-
+        
+        String pdf_name = file.getName().replace(".pdf","");
+        
         // svg
-        String svg_name = ".//test//" + String.format("%03d", page_number) + ".svg";
+        String svg_name = ".//test//" + String.format("%03d", page_number) + "_" + pdf_name + ".svg";
         graphics = new SVGGraphics2D(new File(svg_name), new Dimension(widthPx, heightPx));
         
         UserProperties p = new UserProperties();
@@ -163,7 +168,7 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         xform_flip = graphics.getTransform();  
         
         // eps
-        String eps_name = ".//test//" + String.format("%03d", page_number) + ".eps";
+        String eps_name = ".//test//" + String.format("%03d", page_number) + "_" + pdf_name + ".eps";
         graphics_eps = new PSGraphics2D(new File(eps_name), new Dimension(widthPx, heightPx));
         
         p = new UserProperties();
@@ -585,28 +590,26 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
                     
         // this has properties such as line width, etc...
         PDGraphicsState state = getGraphicsState();
+        Composite stroke_composite = getGraphicsState().getStrokingJavaComposite();
+        PDSoftMask soft_mask = state.getSoftMask();
         String stroke_type = state.getStrokingColor().getColorSpace().getName();
         if (stroke_type.contains("Separation") || state.getStrokingColor().isPattern()){
             linePath.reset();   
             return;
         }
         
-        BasicStroke stroke = (BasicStroke) graphics.getStroke();
+        Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
+        BasicStroke stroke = new BasicStroke(state.getLineWidth(), state.getLineCap(), state.getLineJoin(), state.getMiterLimit());
 
-     
         GeneralPath path = (GeneralPath)getLinePath().clone();
         Shape shape = xform.createTransformedShape(path);
-
         
         Color stroke_color = new Color(state.getStrokingColor().toRGB());
 
-        //graphics.setComposite(getGraphicsState().getStrokingJavaComposite());
-        //graphics_eps.setComposite(getGraphicsState().getStrokingJavaComposite());
-        
         // svg rgb
-        graphics.setStroke(stroke);
+        graphics.setComposite(stroke_composite);
         graphics.setPaint(stroke_color);
-        //setClip();
+        graphics.setStroke(stroke);
         graphics.draw(shape);
         
         if (stroke_type.contains("CMYK")){
@@ -614,8 +617,9 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         }
 
         // eps cmyk
-        graphics_eps.setStroke(stroke); 
+        graphics_eps.setComposite(stroke_composite);
         graphics_eps.setPaint(stroke_color);
+        graphics_eps.setStroke(stroke); 
         graphics_eps.draw(shape);          
 
         // reset path
@@ -826,7 +830,7 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         graphics.drawString(unicode, (float)shape.getBounds2D().getMinX(), (float)(pageSize.getHeight() - shape.getBounds2D().getMinY()));
         
         if (fill_type.contains("CMYK")){
-            fill_color = new Color(CMYKColorSpace.getInstance(), state.getStrokingColor().getComponents(), 1f);
+            fill_color = new Color(CMYKColorSpace.getInstance(), state.getNonStrokingColor().getComponents(), 1f);
         }
         
         graphics_eps.setColor(fill_color);
