@@ -19,6 +19,7 @@ import java.awt.geom.Point2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -27,6 +28,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -113,6 +115,8 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
     public boolean enable_text = true;
     public boolean enable_vector = true;
     public boolean enable_image = true;
+    
+    public BasicDocument bdoc = null;
     
 
     /**
@@ -205,6 +209,7 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
      */
     @Override
     public void processPage(PDPage page) throws IOException {
+        bdoc.add_page();
         init_graphics(page);
 
         // process super
@@ -227,11 +232,20 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         
         BufferedImage image = pdImage.getImage();
         Matrix ctmNew = getGraphicsState().getCurrentTransformationMatrix();
+
         AffineTransform imageTransform = ctmNew.createAffineTransform();
         imageTransform.scale(1.0 / image.getWidth(), -1.0 / image.getHeight());
         imageTransform.translate(0, -image.getHeight());
         graphics.drawImage(image, imageTransform, null);
         graphics_eps.drawImage(image, imageTransform, null);
+        
+        // add item in millimeters
+        Map<String, Object> bitem = bdoc.add_item(bdoc.get_last_page_index());
+        bitem.put("type", "image");
+        bitem.put("extension", pdImage.getSuffix());
+        float[][] matrix = Util.get_matrix_mm(ctmNew, pageSize);
+        bitem.put("matrix", matrix);
+        bitem.put("base64", Util.to_base64(image, pdImage.getSuffix()));
     }
  
 
@@ -660,7 +674,12 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
     @Override
     protected void showText(byte[] string) throws IOException {
         if (!enable_text)
-            return;        
+            return;
+        
+        Map<String, Object> bitem = bdoc.add_item(bdoc.get_last_page_index());
+        bitem.put("type", "string");
+        //bitem.put("matrix", Util.get_matrix_mm(this.getTextMatrix(), pageSize));        
+        bitem.put("characters", new ArrayList());
         
         // flip the page graphics
         graphics.setTransform(xform);
@@ -835,7 +854,17 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         
         graphics_eps.setColor(fill_color);
         graphics_eps.setFont(new Font(font_attributes));
-        graphics_eps.drawString(unicode, (float)shape.getBounds2D().getMinX(), (float)(pageSize.getHeight() - shape.getBounds2D().getMinY()));        
+        graphics_eps.drawString(unicode, (float)shape.getBounds2D().getMinX(), (float)(pageSize.getHeight() - shape.getBounds2D().getMinY()));
+        
+        Map<String, Object> bitem = bdoc.get_last_item(bdoc.get_last_page_index());
+        ArrayList characters = (ArrayList) bitem.get("characters");
+        Map<String, Object> chr = new LinkedHashMap<>();
+        chr.put("unicode", unicode);
+        chr.put("family", font_map_name);
+        chr.put("size", font_size_pt);
+        chr.put("weight", font_attributes.get(TextAttribute.WEIGHT));
+        chr.put("matrix", Util.get_matrix_mm(Util.to_matrix(at), pageSize));
+        characters.add(chr);
     }
     
 

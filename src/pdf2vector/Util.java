@@ -6,17 +6,26 @@ import java.awt.geom.AffineTransform;
 import java.awt.geom.Line2D;
 import java.awt.geom.Point2D;
 import java.awt.geom.Rectangle2D;
+import java.awt.image.BufferedImage;
 import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.imageio.ImageIO;
+import org.apache.pdfbox.io.IOUtils;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.util.Matrix;
 import org.apache.xmlgraphics.java2d.CMYKColorSpace;
 
 /**
@@ -111,7 +120,11 @@ public class Util {
      */
     public static double pt_to_mm(double pt){
         return pt / MM_TO_UNITS;
-    }  
+    }
+    
+    public static float pt_to_mm(float pt){
+        return pt / MM_TO_UNITS;
+    }      
 
     /**
      * Rounding function
@@ -451,6 +464,61 @@ public class Util {
         
         return result;
     }
+    
+    public static String to_base64(BufferedImage image, String extension) throws IOException{
+        final ByteArrayOutputStream os = new ByteArrayOutputStream();
+        ImageIO.write(image, extension, os);
+        return Base64.getEncoder().encodeToString(os.toByteArray());
+    }
+    
+    public static Matrix to_matrix(AffineTransform transform){
+        double[] matrix = new double[6];
+        transform.getMatrix(matrix);        
+        Matrix result = new Matrix((float)matrix[0],(float)matrix[1],(float)matrix[2],(float)matrix[3],(float)matrix[4],(float)matrix[5]);
+        return result;
+    }   
+
+    public static float[][] pt_to_mm(float[][] values){
+        values[0][0] = pt_to_mm(values[0][0]);
+        values[0][1] = pt_to_mm(values[0][1]);
+        values[1][0] = pt_to_mm(values[1][0]);
+        values[1][1] = pt_to_mm(values[1][1]);
+        values[2][0] = pt_to_mm(values[2][0]);
+        values[2][1] = pt_to_mm(values[2][1]);        
+        return values;
+    }
+    
+    public static float[][] get_matrix(float x, float y, float w, float h){
+        float[][] values = new float[3][3];
+        values[0][0] = w;
+        values[0][1] = 0;
+        values[1][0] = 0;
+        values[1][1] = h;
+        values[2][0] = x;
+        values[2][1] = y;
+        values[2][2] = 1;       
+        return values;        
+    }
+    
+    public static float[][] flip_matrix(float[][] values, float y_value){
+        values[2][1] = y_value - values[2][1] - values[1][1];
+        return values;
+    }
+    
+    /**
+     * Gets a matrix
+     * Flip matrix to set registration top left
+     * Convert pt to mm
+     * @param matrix
+     * @param page_size
+     * @return 
+     */
+    public static float[][] get_matrix_mm(Matrix matrix, PDRectangle page_size){
+        float[][] values = Util.get_matrix(matrix.getTranslateX(), matrix.getTranslateY(), matrix.getScalingFactorX(), matrix.getScalingFactorY());
+        values = flip_matrix(values, (float)page_size.getHeight());
+        return Util.pt_to_mm(values);
+    }
+    
     
 
 }
