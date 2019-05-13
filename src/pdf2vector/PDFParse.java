@@ -35,6 +35,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.stream.Stream;
+import org.apache.fontbox.util.BoundingBox;
 import org.apache.pdfbox.contentstream.PDContentStream;
 import org.apache.pdfbox.contentstream.PDFGraphicsStreamEngine;
 import org.apache.pdfbox.contentstream.operator.Operator;
@@ -62,6 +63,12 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.pdmodel.common.PDStream;
 import org.apache.pdfbox.pdmodel.common.function.PDFunction;
+import org.apache.pdfbox.pdmodel.font.PDCIDFontType2;
+import org.apache.pdfbox.pdmodel.font.PDTrueTypeFont;
+import org.apache.pdfbox.pdmodel.font.PDType0Font;
+import org.apache.pdfbox.pdmodel.font.PDType3CharProc;
+import org.apache.pdfbox.pdmodel.font.PDType3Font;
+import org.apache.pdfbox.pdmodel.font.PDVectorFont;
 import org.apache.pdfbox.pdmodel.graphics.PDXObject;
 import org.apache.pdfbox.pdmodel.graphics.blend.BlendMode;
 import org.apache.pdfbox.pdmodel.graphics.color.PDColor;
@@ -855,7 +862,8 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         graphics_eps.setColor(fill_color);
         graphics_eps.setFont(new Font(font_attributes));
         graphics_eps.drawString(unicode, (float)shape.getBounds2D().getMinX(), (float)(pageSize.getHeight() - shape.getBounds2D().getMinY()));
-        
+
+        Shape bounds = calculate_glyph_bounds(textRenderingMatrix, font, code);
         Map<String, Object> bitem = bdoc.get_last_item(bdoc.get_last_page_index());
         ArrayList characters = (ArrayList) bitem.get("characters");
         Map<String, Object> chr = new LinkedHashMap<>();
@@ -864,10 +872,81 @@ public class PDFParse extends PDFGraphicsStreamEngine implements Runnable
         chr.put("size", font_size_pt);
         chr.put("weight", font_attributes.get(TextAttribute.WEIGHT));
         chr.put("matrix", Util.get_matrix_mm(Util.to_matrix(at), pageSize));
+        chr.put("cap_height", Util.pt_to_mm(descriptor.getCapHeight()/1000) * font_size_pt);
+        chr.put("ascent", Util.pt_to_mm(descriptor.getAscent()/1000) * font_size_pt);
+        chr.put("descent", Util.pt_to_mm(descriptor.getDescent()/1000 * font_size_pt));
+        chr.put("width", Util.pt_to_mm(font.getWidth(code)/1000) * font_size_pt);
+        chr.put("x_height", Util.pt_to_mm(descriptor.getXHeight()));
+        chr.put("position", new double[]{Util.pt_to_mm(at.getTranslateX()), Util.pt_to_mm(pageSize.getHeight() - at.getTranslateY())});
+        chr.put("dimensions", new double[]{Util.pt_to_mm(font_size_pt), Util.pt_to_mm(font_size_pt)});
+        chr.put("baseline", Util.pt_to_mm(pageSize.getHeight() - at.getTranslateY()));
+        chr.put("height", Util.pt_to_mm(font.getHeight(code)/1000) * font_size_pt);
+        chr.put("bounds", new double[]{Util.pt_to_mm(bounds.getBounds2D().getMinX()), Util.pt_to_mm(pageSize.getHeight() - bounds.getBounds2D().getMinY() - bounds.getBounds2D().getHeight()), Util.pt_to_mm(bounds.getBounds2D().getWidth()), Util.pt_to_mm(bounds.getBounds2D().getHeight())});
         characters.add(chr);
     }
     
-
+    /**
+     * this calculates the real (except for type 3 fonts) individual glyph bounds
+     * @param textRenderingMatrix
+     * @param font
+     * @param code
+     * @return
+     * @throws IOException 
+     */
+    private Shape calculate_glyph_bounds(Matrix textRenderingMatrix, PDFont font, int code) throws IOException {
+        GeneralPath path = null;
+        AffineTransform at = textRenderingMatrix.createAffineTransform();
+        at.concatenate(font.getFontMatrix().createAffineTransform());
+        if (font instanceof PDType3Font) {
+            // It is difficult to calculate the real individual glyph bounds for type 3 fonts
+            // because these are not vector fonts, the content stream could contain almost anything
+            // that is found in page content streams.
+            PDType3Font t3Font = (PDType3Font) font;
+            PDType3CharProc charProc = t3Font.getCharProc(code);
+            if (charProc != null) {
+                BoundingBox fontBBox = t3Font.getBoundingBox();
+                PDRectangle glyphBBox = charProc.getGlyphBBox();
+                if (glyphBBox != null) {
+                    // PDFBOX-3850: glyph bbox could be larger than the font bbox
+                    glyphBBox.setLowerLeftX(Math.max(fontBBox.getLowerLeftX(), glyphBBox.getLowerLeftX()));
+                    glyphBBox.setLowerLeftY(Math.max(fontBBox.getLowerLeftY(), glyphBBox.getLowerLeftY()));
+                    glyphBBox.setUpperRightX(Math.min(fontBBox.getUpperRightX(), glyphBBox.getUpperRightX()));
+                    glyphBBox.setUpperRightY(Math.min(fontBBox.getUpperRightY(), glyphBBox.getUpperRightY()));
+                    path = glyphBBox.toGeneralPath();
+                }
+            }
+        } else if (font instanceof PDVectorFont) {
+            PDVectorFont vectorFont = (PDVectorFont) font;
+            path = vectorFont.getPath(code);
+            if (font instanceof PDTrueTypeFont) {
+                PDTrueTypeFont ttFont = (PDTrueTypeFont) font;
+                int unitsPerEm = ttFont.getTrueTypeFont().getHeader().getUnitsPerEm();
+                at.scale(1000d / unitsPerEm, 1000d / unitsPerEm);
+            }
+            if (font instanceof PDType0Font) {
+                PDType0Font t0font = (PDType0Font) font;
+                if (t0font.getDescendantFont() instanceof PDCIDFontType2)
+                {
+                    int unitsPerEm = ((PDCIDFontType2) t0font.getDescendantFont()).getTrueTypeFont().getHeader().getUnitsPerEm();
+                    at.scale(1000d / unitsPerEm, 1000d / unitsPerEm);
+                }
+            }
+        } else if (font instanceof PDSimpleFont){
+            PDSimpleFont simpleFont = (PDSimpleFont) font;
+            // these two lines do not always work, e.g. for the TT fonts in file 032431.pdf
+            // which is why PDVectorFont is tried first.
+            String name = simpleFont.getEncoding().getName(code);
+            path = simpleFont.getPath(name);
+        } else{
+            System.out.println("Unknown font class: " + font.getClass());
+        }
+        if (path == null){
+            return null;
+        }
+        return at.createTransformedShape(path.getBounds2D());
+    }
+    
+    
     @Override
     public void appendRectangle(Point2D p0, Point2D p1, Point2D p2, Point2D p3) throws IOException
     {
